@@ -1,0 +1,442 @@
+# ╔══════════════════════════════════════════════════════════════════╗
+# ║   WP Sales Manager Pro — WAF + Security Config (LiteSpeed)      ║
+# ║   Protection: SQLi, XSS, Bot, Path Traversal, DDoS, RFI        ║
+# ╚══════════════════════════════════════════════════════════════════╝
+
+Options -Indexes -MultiViews -ExecCGI
+DirectoryIndex index.html index.php
+
+# ══════════════════════════════════════════════════════════════════
+# 1. PHP HARDENING
+# ══════════════════════════════════════════════════════════════════
+<IfModule LiteSpeed>
+    php_flag  display_errors           off
+    php_flag  log_errors               on
+    php_flag  expose_php               off
+    php_flag  register_globals         off
+    php_flag  allow_url_fopen          off
+    php_flag  session.cookie_httponly  on
+    php_value session.cookie_samesite  Lax
+    php_flag  session.use_strict_mode  on
+    php_value error_log                error.log
+</IfModule>
+
+<IfModule mod_php8.c>
+    php_flag  display_errors           off
+    php_flag  log_errors               on
+    php_flag  expose_php               off
+    php_flag  session.cookie_httponly  on
+    php_value session.cookie_samesite  Lax
+    php_flag  session.use_strict_mode  on
+</IfModule>
+
+# ══════════════════════════════════════════════════════════════════
+# 2. SECURITY HEADERS
+# ══════════════════════════════════════════════════════════════════
+<IfModule mod_headers.c>
+    # Clickjacking — DENY (stricter than SAMEORIGIN)
+    Header always set X-Frame-Options "DENY"
+    # MIME sniffing protection
+    Header always set X-Content-Type-Options "nosniff"
+    # XSS browser filter
+    Header always set X-XSS-Protection "1; mode=block"
+    # HSTS — force HTTPS for 1 year
+    Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+    # Referrer policy
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+    # Feature policy
+    Header always set Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=(), usb=()"
+    # Prevent cross-domain requests
+    Header always set X-Permitted-Cross-Domain-Policies "none"
+    # Remove server info
+    Header always unset X-Powered-By
+    Header always unset Server
+    # Content Security Policy — full production-grade CSP
+    Header always set Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; media-src 'none'; worker-src 'none'; manifest-src 'self'"
+    # No cache for PHP
+    <FilesMatch "\.php$">
+        Header always set Cache-Control "no-store, no-cache, must-revalidate, max-age=0"
+        Header always set Pragma "no-cache"
+        Header always set X-LiteSpeed-Cache-Control "no-cache"
+    </FilesMatch>
+    # Long-term cache for static assets with versioning
+    <FilesMatch "\.(ico|jpg|jpeg|png|gif|svg|webp|woff|woff2|ttf|eot)$">
+        Header always set Cache-Control "public, max-age=31536000, immutable"
+        Header always set Vary "Accept-Encoding"
+    </FilesMatch>
+    # Medium-term cache for CSS/JS
+    <FilesMatch "\.(css|js)$">
+        Header always set Cache-Control "public, max-age=86400, must-revalidate"
+        Header always set Vary "Accept-Encoding"
+    </FilesMatch>
+    # HTML — short cache with revalidation
+    <FilesMatch "\.html$">
+        Header always set Cache-Control "public, max-age=3600, must-revalidate"
+        Header always set Vary "Accept-Encoding"
+    </FilesMatch>
+</IfModule>
+
+# ══════════════════════════════════════════════════════════════════
+# 3. GZIP + BROTLI COMPRESSION (major speed boost)
+# ══════════════════════════════════════════════════════════════════
+<IfModule mod_deflate.c>
+    AddOutputFilterByType DEFLATE text/html text/plain text/xml text/css
+    AddOutputFilterByType DEFLATE application/javascript application/x-javascript
+    AddOutputFilterByType DEFLATE application/json application/xml
+    AddOutputFilterByType DEFLATE image/svg+xml
+    AddOutputFilterByType DEFLATE font/ttf font/otf application/font-woff application/font-woff2
+    # Don't compress already-compressed files
+    SetEnvIfNoCase Request_URI \.(?:gif|jpe?g|png|webp|gz|zip|bz2|woff2)$ no-gzip dont-vary
+    # Ensure proxies cache both gzipped and ungzipped
+    Header append Vary Accept-Encoding env=!dont-vary
+</IfModule>
+
+# LiteSpeed native compression
+<IfModule LiteSpeed>
+    RewriteRule .* - [E=noabort:1]
+</IfModule>
+
+# Brotli (if available)
+<IfModule mod_brotli.c>
+    AddOutputFilterByType BROTLI_COMPRESS text/html text/plain text/css
+    AddOutputFilterByType BROTLI_COMPRESS application/javascript application/json
+    AddOutputFilterByType BROTLI_COMPRESS image/svg+xml
+</IfModule>
+
+# ══════════════════════════════════════════════════════════════════
+# 4. BROWSER CACHING — ETag + Last-Modified
+# ══════════════════════════════════════════════════════════════════
+<IfModule mod_expires.c>
+    ExpiresActive On
+    ExpiresDefault                          "access plus 1 hour"
+    ExpiresByType text/html                 "access plus 1 hour"
+    ExpiresByType text/css                  "access plus 1 day"
+    ExpiresByType application/javascript    "access plus 1 day"
+    ExpiresByType image/png                 "access plus 1 year"
+    ExpiresByType image/jpeg                "access plus 1 year"
+    ExpiresByType image/gif                 "access plus 1 year"
+    ExpiresByType image/svg+xml             "access plus 1 year"
+    ExpiresByType image/webp                "access plus 1 year"
+    ExpiresByType image/x-icon              "access plus 1 year"
+    ExpiresByType font/woff2                "access plus 1 year"
+    ExpiresByType font/woff                 "access plus 1 year"
+    ExpiresByType application/font-woff2    "access plus 1 year"
+    ExpiresByType application/json          "access plus 0 seconds"
+</IfModule>
+
+# FileETag for cache validation
+FileETag MTime Size
+
+# ══════════════════════════════════════════════════════════════════
+# 5. HTTPS FORCE REDIRECT
+# ══════════════════════════════════════════════════════════════════
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteBase /
+
+    # Force HTTPS
+    RewriteCond %{HTTPS} off
+    RewriteCond %{HTTP:X-Forwarded-Proto} !https
+    RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+    # ════════════════════════════════════════════════════════════
+    # 6. BLOCK MALICIOUS BOTS & ATTACK TOOLS
+    # ════════════════════════════════════════════════════════════
+    RewriteCond %{HTTP_USER_AGENT} (sqlmap|nikto|nessus|openvas|w3af|burpsuite|acunetix|netsparker|havij|pangolin|zmeu|masscan|zmap|dirbuster|gobuster|wfuzz|hydra|medusa|john.the.ripper|metasploit|msfconsole|beef|commix|skipfish|webscarab|owasp|paros|ratproxy|grabber|grendel|wikto|psyche|ncrack|brutus|aircrack|l33t|r00t|h4x0r) [NC]
+    RewriteRule .* - [F,L]
+
+    # Block empty user agents
+    RewriteCond %{HTTP_USER_AGENT} ^-?$
+    RewriteRule .* - [F,L]
+
+    # Block suspicious user agents on API
+    RewriteCond %{HTTP_USER_AGENT} (python-requests|python-urllib|libwww-perl|lwp-trivial|wget|curl|go-http|java\/|zgrab|masscan|nmap|scrapy|mechanize|httpclient|apache-httpclient|okhttp) [NC]
+    RewriteRule ^api/ - [F,L]
+
+    # ════════════════════════════════════════════════════════════
+    # 7. SQL INJECTION BLOCKING
+    # ════════════════════════════════════════════════════════════
+    RewriteCond %{QUERY_STRING} (union.*select|select.*from|insert.*into|delete.*from|drop.*table|update.*set|create.*table|alter.*table|exec.*xp_|execute.*sp_|benchmark\(|sleep\(|waitfor.*delay|load_file\(|outfile|information_schema|sys\.tables|xp_cmdshell|0x[0-9a-f]+|char\([0-9]+\)|concat\(|group_concat) [NC]
+    RewriteRule .* - [F,L]
+
+    RewriteCond %{REQUEST_URI} (union.*select|select.*from|drop.*table|insert.*into) [NC]
+    RewriteRule .* - [F,L]
+
+    # ════════════════════════════════════════════════════════════
+    # 8. XSS ATTACK BLOCKING
+    # ════════════════════════════════════════════════════════════
+    RewriteCond %{QUERY_STRING} (<script|<\/script|javascript:|vbscript:|onload=|onerror=|onclick=|onmouseover=|onfocus=|alert\(|eval\(|document\.cookie|document\.write|window\.location|\.innerHTML|fromCharCode|String\.fromCharCode|base64_decode|%3Cscript|%3C%2Fscript) [NC]
+    RewriteRule .* - [F,L]
+
+    RewriteCond %{REQUEST_URI} (<script|javascript:|on\w+=|%3Cscript|%3C%2Fscript) [NC]
+    RewriteRule .* - [F,L]
+
+    # ════════════════════════════════════════════════════════════
+    # 9. PATH TRAVERSAL & FILE INCLUSION BLOCKING
+    # ════════════════════════════════════════════════════════════
+    RewriteCond %{QUERY_STRING} (\.\.\/|\.\.\\|%2e%2e%2f|%2e%2e\/|\.\.%2f|%2e\.%2f) [NC]
+    RewriteRule .* - [F,L]
+
+    RewriteCond %{QUERY_STRING} (http://|https://|ftp://|php://|file://|data://|zip://|expect://) [NC]
+    RewriteCond %{QUERY_STRING} (=http|=ftp|=https|=php|=file|=data) [NC]
+    RewriteRule .* - [F,L]
+
+    RewriteCond %{QUERY_STRING} (\/etc\/passwd|\/etc\/shadow|\/proc\/self|\/var\/log|boot\.ini|win\.ini|system32) [NC]
+    RewriteRule .* - [F,L]
+
+    # ════════════════════════════════════════════════════════════
+    # 10. REQUEST METHOD + FLOOD PROTECTION
+    # ════════════════════════════════════════════════════════════
+    RewriteCond %{REQUEST_METHOD} !^(GET|POST|OPTIONS|HEAD)$
+    RewriteRule .* - [F,L]
+
+    RewriteRule ^uploads/.*\.(php|php3|php4|php5|phtml|pl|py|jsp|asp|sh|cgi)$ - [F,L]
+
+    # Block oversized query strings (scanning)
+    RewriteCond %{QUERY_STRING} ^.{500,}$
+    RewriteRule .* - [F,L]
+
+    # Block null byte injection
+    RewriteCond %{QUERY_STRING} (%00|\\x00|\\0) [NC]
+    RewriteRule .* - [F,L]
+
+    # Block CRLF injection
+    RewriteCond %{QUERY_STRING} (%0d|%0a|%0D|%0A|\r|\n) [NC]
+    RewriteRule .* - [F,L]
+
+    # Block command injection
+    RewriteCond %{QUERY_STRING} (;ls|;id|;pwd|;cat|;wget|;curl|`ls`|`id`|`pwd`|\|ls|\|id|&&ls|&&id) [NC]
+    RewriteRule .* - [F,L]
+</IfModule>
+
+# ══════════════════════════════════════════════════════════════════
+# 11. SENSITIVE FILE BLOCKING
+# ══════════════════════════════════════════════════════════════════
+<FilesMatch "(\.env|\.git|\.htpasswd|\.DS_Store|Thumbs\.db|composer\.(json|lock)|package(-lock)?\.json|yarn\.lock|phpinfo\.php|error\.log|debug\.log|\.sql|\.bak|\.backup|\.swp|\.swo|\.orig|wp-config\.php)$">
+    Order deny,allow
+    Deny from all
+</FilesMatch>
+
+<FilesMatch "^(test|test_api|phpinfo|info|debug|adminer|phpmyadmin)\.php$">
+    Order deny,allow
+    Deny from all
+</FilesMatch>
+
+<FilesMatch "^(config|database|security)\.php$">
+    Order deny,allow
+    Deny from all
+</FilesMatch>
+
+# ══════════════════════════════════════════════════════════════════
+# 12. LIMIT REQUEST SIZE (Anti-DDoS)
+# ══════════════════════════════════════════════════════════════════
+<IfModule mod_security.c>
+    SecRequestBodyLimit 1048576
+    SecRequestBodyNoFilesLimit 131072
+</IfModule>
+
+# ══════════════════════════════════════════════════════════════════
+# 13. DIRECTORY PROTECTION
+# ══════════════════════════════════════════════════════════════════
+<IfModule mod_autoindex.c>
+    IndexIgnore *
+</IfModule>
+
+
+
+Options -Indexes -MultiViews -ExecCGI
+DirectoryIndex index.html index.php
+
+# ══════════════════════════════════════════════════════════════════
+# 1. PHP HARDENING
+# ══════════════════════════════════════════════════════════════════
+<IfModule LiteSpeed>
+    php_flag  display_errors           off
+    php_flag  log_errors               on
+    php_flag  expose_php               off
+    php_flag  register_globals         off
+    php_flag  allow_url_fopen          off
+    php_flag  session.cookie_httponly  on
+    php_value session.cookie_samesite  Lax
+    php_flag  session.use_strict_mode  on
+    php_value error_log                error.log
+</IfModule>
+
+<IfModule mod_php8.c>
+    php_flag  display_errors           off
+    php_flag  log_errors               on
+    php_flag  expose_php               off
+    php_flag  session.cookie_httponly  on
+    php_value session.cookie_samesite  Lax
+    php_flag  session.use_strict_mode  on
+</IfModule>
+
+# ══════════════════════════════════════════════════════════════════
+# 2. SECURITY HEADERS
+# ══════════════════════════════════════════════════════════════════
+<IfModule mod_headers.c>
+    # Clickjacking protection — DENY (strictest)
+    # MIME sniffing protection
+    Header always set X-Content-Type-Options "nosniff"
+    # XSS browser filter
+    Header always set X-XSS-Protection "1; mode=block"
+    # HSTS — force HTTPS for 1 year
+    Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+    # Referrer policy
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+    # Feature policy
+    Header always set Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=(), usb=()"
+    # Prevent cross-domain requests
+    Header always set X-Permitted-Cross-Domain-Policies "none"
+    # Remove server info
+    Header always unset X-Powered-By
+    Header always unset Server
+    # No cache for PHP
+    <FilesMatch "\.php$">
+        Header always set Cache-Control "no-store, no-cache, must-revalidate, max-age=0"
+        Header always set Pragma "no-cache"
+        Header always set X-LiteSpeed-Cache-Control "no-cache"
+    </FilesMatch>
+</IfModule>
+
+# ══════════════════════════════════════════════════════════════════
+# 3. HTTPS FORCE REDIRECT
+# ══════════════════════════════════════════════════════════════════
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteBase /
+
+    # Force HTTPS
+    RewriteCond %{HTTPS} off
+    RewriteCond %{HTTP:X-Forwarded-Proto} !https
+    RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+    # ════════════════════════════════════════════════════════════
+    # 4. BLOCK MALICIOUS BOTS & ATTACK TOOLS
+    # ════════════════════════════════════════════════════════════
+    # Block known hacking/scanning tools
+    RewriteCond %{HTTP_USER_AGENT} (sqlmap|nikto|nessus|openvas|w3af|burpsuite|acunetix|netsparker|havij|pangolin|zmeu|masscan|zmap|dirbuster|gobuster|wfuzz|hydra|medusa|john.the.ripper|metasploit|msfconsole|beef|commix|skipfish|webscarab|owasp|paros|ratproxy|grabber|grendel|wikto|psyche|ncrack|brutus|aircrack|l33t|r00t|h4x0r) [NC]
+    RewriteRule .* - [F,L]
+
+    # Block empty user agents (bots/scripts)
+    RewriteCond %{HTTP_USER_AGENT} ^-?$
+    RewriteRule .* - [F,L]
+
+    # Block suspicious user agents
+    RewriteCond %{HTTP_USER_AGENT} (python-requests|python-urllib|libwww-perl|lwp-trivial|wget|curl|go-http|java\/|zgrab|masscan|nmap|scrapy|mechanize|httpclient|apache-httpclient|okhttp) [NC]
+    RewriteRule ^api/ - [F,L]
+
+    # ════════════════════════════════════════════════════════════
+    # 5. SQL INJECTION BLOCKING
+    # ════════════════════════════════════════════════════════════
+    RewriteCond %{QUERY_STRING} (union.*select|select.*from|insert.*into|delete.*from|drop.*table|update.*set|create.*table|alter.*table|exec.*xp_|execute.*sp_|benchmark\(|sleep\(|waitfor.*delay|load_file\(|outfile|information_schema|sys\.tables|xp_cmdshell|0x[0-9a-f]+|char\([0-9]+\)|concat\(|group_concat) [NC]
+    RewriteRule .* - [F,L]
+
+    # SQLi in request body indicator (common patterns)
+    RewriteCond %{REQUEST_URI} (union.*select|select.*from|drop.*table|insert.*into) [NC]
+    RewriteRule .* - [F,L]
+
+    # ════════════════════════════════════════════════════════════
+    # 6. XSS ATTACK BLOCKING
+    # ════════════════════════════════════════════════════════════
+    RewriteCond %{QUERY_STRING} (<script|<\/script|javascript:|vbscript:|onload=|onerror=|onclick=|onmouseover=|onfocus=|alert\(|eval\(|document\.cookie|document\.write|window\.location|\.innerHTML|fromCharCode|String\.fromCharCode|base64_decode|%3Cscript|%3C%2Fscript) [NC]
+    RewriteRule .* - [F,L]
+
+    # XSS in URI
+    RewriteCond %{REQUEST_URI} (<script|javascript:|on\w+=|%3Cscript|%3C%2Fscript) [NC]
+    RewriteRule .* - [F,L]
+
+    # ════════════════════════════════════════════════════════════
+    # 7. PATH TRAVERSAL & FILE INCLUSION BLOCKING
+    # ════════════════════════════════════════════════════════════
+    # Directory traversal
+    RewriteCond %{QUERY_STRING} (\.\./|\.\.\\|%2e%2e%2f|%2e%2e\/|\.\.%2f|%2e\.%2f) [NC]
+    RewriteRule .* - [F,L]
+
+    # Remote File Inclusion (RFI)
+    RewriteCond %{QUERY_STRING} (http://|https://|ftp://|php://|file://|data://|zip://|expect://) [NC]
+    RewriteCond %{QUERY_STRING} (=http|=ftp|=https|=php|=file|=data) [NC]
+    RewriteRule .* - [F,L]
+
+    # Local File Inclusion (LFI)
+    RewriteCond %{QUERY_STRING} (\/etc\/passwd|\/etc\/shadow|\/proc\/self|\/var\/log|boot\.ini|win\.ini|system32) [NC]
+    RewriteRule .* - [F,L]
+
+    # ════════════════════════════════════════════════════════════
+    # 8. REQUEST FLOOD / DDOS BASIC PROTECTION
+    # ════════════════════════════════════════════════════════════
+    # Limit request methods
+    RewriteCond %{REQUEST_METHOD} !^(GET|POST|OPTIONS|HEAD)$
+    RewriteRule .* - [F,L]
+
+    # Block PHP in uploads (if any)
+    RewriteRule ^uploads/.*\.(php|php3|php4|php5|phtml|pl|py|jsp|asp|sh|cgi)$ - [F,L]
+
+    # ════════════════════════════════════════════════════════════
+    # 9. SPAM/FLOOD PATTERN BLOCKING
+    # ════════════════════════════════════════════════════════════
+    # Block requests with too many query string params (scanning)
+    RewriteCond %{QUERY_STRING} ^.{500,}$
+    RewriteRule .* - [F,L]
+
+    # Block null byte injection
+    RewriteCond %{QUERY_STRING} (%00|\\x00|\\0) [NC]
+    RewriteRule .* - [F,L]
+
+    # Block CRLF injection
+    RewriteCond %{QUERY_STRING} (%0d|%0a|%0D|%0A|\r|\n) [NC]
+    RewriteRule .* - [F,L]
+
+    # Block command injection patterns
+    RewriteCond %{QUERY_STRING} (;ls|;id|;pwd|;cat|;wget|;curl|`ls`|`id`|`pwd`|\|ls|\|id|&&ls|&&id) [NC]
+    RewriteRule .* - [F,L]
+</IfModule>
+
+# ══════════════════════════════════════════════════════════════════
+# 10. SENSITIVE FILE BLOCKING
+# ══════════════════════════════════════════════════════════════════
+<FilesMatch "(\.env|\.git|\.htpasswd|\.DS_Store|Thumbs\.db|composer\.(json|lock)|package(-lock)?\.json|yarn\.lock|phpinfo\.php|error\.log|debug\.log|\.sql|\.bak|\.backup|\.swp|\.swo|\.orig|wp-config\.php)$">
+    Order deny,allow
+    Deny from all
+</FilesMatch>
+
+# Block test/diagnostic files (delete after use)
+<FilesMatch "^(test|test_api|phpinfo|info|debug|adminer|phpmyadmin)\.php$">
+    Order deny,allow
+    Deny from all
+</FilesMatch>
+
+# Protect config and includes directories
+<FilesMatch "^(config|database|security)\.php$">
+    Order deny,allow
+    Deny from all
+</FilesMatch>
+
+# ══════════════════════════════════════════════════════════════════
+# 11. LIMIT REQUEST SIZE (Anti-DDoS / Large payload)
+# ══════════════════════════════════════════════════════════════════
+<IfModule mod_security.c>
+    SecRequestBodyLimit 1048576
+    SecRequestBodyNoFilesLimit 131072
+</IfModule>
+
+# LiteSpeed request body limit
+<IfModule LiteSpeed>
+    RewriteRule .* - [E=noabort:1]
+</IfModule>
+
+# ══════════════════════════════════════════════════════════════════
+# 12. IP BLOCKING (Known bad IPs — auto-updated via PHP WAF)
+# ══════════════════════════════════════════════════════════════════
+# Dynamic IP blocks managed by waf.php
+# Static emergency block example:
+# Deny from 1.2.3.4
+# Deny from 10.0.0.0/8
+
+# ══════════════════════════════════════════════════════════════════
+# 13. DIRECTORY PROTECTION
+# ══════════════════════════════════════════════════════════════════
+<IfModule mod_autoindex.c>
+    IndexIgnore *
+</IfModule>
+
